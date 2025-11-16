@@ -26,9 +26,9 @@ except Exception:
 # [cite_start]The official API Endpoint from the guide [cite: 6]
 API_ENDPOINT = "https://ctwa92wg1b.execute-api.us-east-1.amazonaws.com/prod/invoke"
 # NOTE: We only need these two variables, as the Session Token is removed.
-TEAM_ID = os.environ.get("HOLISTIC_AI_TEAM_ID")
-API_TOKEN = os.environ.get("HOLISTIC_AI_API_TOKEN")
-
+TEAM_ID = "team_the_great_hack_2025_035"
+API_TOKEN = "riUUwey_QPVMbxUp96tEOQkyPI9mZpXGX2CWkQBWm34"
+Valyu_API_KEY = "zQGxtquaju7zu8fWQXqi76DO91AEesJx7nBMCDwB"
 # Check for essential keys
 if not TEAM_ID or not API_TOKEN:
     print("\n--- FATAL ERROR: Credentials Not Found ---")

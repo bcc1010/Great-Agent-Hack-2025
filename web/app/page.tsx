@@ -19,6 +19,9 @@ export default function Page() {
 	const [input, setInput] = useState("")
 	const [loading, setLoading] = useState(false)
 	const [traceUrl, setTraceUrl] = useState<string | null>(null)
+	const [traceText, setTraceText] = useState<string | null>(null)
+	const [highlightedSource, setHighlightedSource] = useState<string | null>(null)
+	const [sources, setSources] = useState<string[]>([])
 	const listRef = useRef<HTMLDivElement>(null)
 
 	// Experts search state on the same page
@@ -37,26 +40,6 @@ export default function Page() {
 
 	const canSend = useMemo(() => input.trim().length > 0 && !loading, [input, loading])
 
-	async function fetchExpertsFromQuery(keywords: string) {
-		try {
-			setExpertsLoading(true)
-			setExpertsError(null)
-			const res = await fetch("/api/experts", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ category, location, keywords, count })
-			})
-			if (!res.ok) throw new Error(`HTTP ${res.status}`)
-			const data = await res.json() as { experts?: Expert[], error?: string }
-			if (data.error) throw new Error(data.error)
-			setExperts(data.experts ?? [])
-		} catch (e: any) {
-			setExpertsError(e?.message ?? String(e))
-			setExperts([])
-		} finally {
-			setExpertsLoading(false)
-		}
-	}
 
 	async function onSend() {
 		if (!canSend) return
@@ -71,13 +54,20 @@ export default function Page() {
 				body: JSON.stringify({ message: userMsg.content, history: messages })
 			})
 			if (!res.ok) throw new Error(`HTTP ${res.status}`)
-			const data = await res.json() as { answer: string, trace_url?: string }
+			const data = await res.json() as { answer: string, trace_url?: string, trace_text?: string }
 			const aiMsg: ChatMessage = { role: "assistant", content: data.answer ?? "" }
 			setMessages(prev => [...prev, aiMsg])
 			setTraceUrl(data.trace_url ?? null)
+			setTraceText(data.trace_text ?? null)
+			
+			// Extract sources from trace_text
+			const extractedSources = extractSourcesFromTrace(data.trace_text || "")
+			setSources(extractedSources)
 
-			// Also populate Experts panel from the same query intent
-			fetchExpertsFromQuery(userMsg.content)
+			// Parse experts from the conversation response
+			const parsedExperts = parseExpertsFromResponse(data.answer ?? "")
+			setExperts(parsedExperts)
+			setExpertsError(null)
 		} catch (e: any) {
 			const aiMsg: ChatMessage = { role: "assistant", content: `An error occurred: ${e?.message ?? String(e)}` }
 			setMessages(prev => [...prev, aiMsg])
@@ -122,7 +112,14 @@ export default function Page() {
 					)}
 					{messages.map((m, i) => (
 						<div key={i} className={"bubble " + (m.role === "user" ? "user" : "assistant")}>
-							{m.content}
+							{m.role === "assistant" ? (
+								<HighlightableText 
+									text={m.content} 
+									onHighlight={setHighlightedSource}
+									sources={sources}
+									experts={experts || []}
+								/>
+							) : m.content}
 						</div>
 					))}
 					{loading && (
@@ -144,17 +141,21 @@ export default function Page() {
 				</div>
 				</div>
 				<div className="card fill">
-					<div className="header">Experts</div>
+					<div className="header">Transparency Audit Log</div>
+					<div className="audit-section">
+						{traceText ? (
+							<TransparencyAudit 
+								traceText={traceText} 
+								highlightedSource={highlightedSource}
+							/>
+						) : (
+							<div className="muted" style={{ padding: '12px' }}>
+								<p>Run a query to see the transparency audit trail and data sources.</p>
+							</div>
+						)}
+					</div>
+					<div className="header" style={{ marginTop: '12px' }}>Expert Finder</div>
 					<div className="controls">
-						<select className="select" value={category} onChange={e => setCategory(e.target.value)}>
-							<option>Energy</option>
-							<option>Biotech</option>
-							<option>AI</option>
-							<option>Materials</option>
-							<option>Semiconductors</option>
-							<option>Aerospace</option>
-							<option>Healthcare</option>
-						</select>
 						<select className="select" value={location} onChange={e => setLocation(e.target.value)}>
 							<option>Any</option>
 							<option>London</option>
@@ -227,6 +228,240 @@ Your Name`} />
 					</div>
 				</div>
 			)}
+		</div>
+	)
+}
+
+function HighlightableText({ text, onHighlight, sources, experts }: { 
+	text: string, 
+	onHighlight: (source: string | null) => void,
+	sources: string[],
+	experts: Expert[]
+}) {
+	// Split text into lines for hoverable segments
+	const lines = text.split('\n').filter(line => line.trim())
+	
+	// Generate sources for each line from experts or trace data
+	const getLineSource = (line: string, index: number): string => {
+		// Check if this line mentions an expert
+		for (const expert of experts) {
+			if (line.includes(expert.name)) {
+				return expert.website || `https://www.google.com/search?q=${encodeURIComponent(expert.name)}`
+			}
+		}
+		
+		// Combine all available sources: expert websites + API sources
+		const allSources: string[] = []
+		
+		// Add expert websites
+		if (experts.length > 0) {
+			experts.forEach(expert => {
+				if (expert.website) allSources.push(expert.website)
+			})
+		}
+		
+		// Add API sources
+		if (sources.length > 0) {
+			allSources.push(...sources)
+		}
+		
+		// Cycle through all available sources
+		if (allSources.length > 0) {
+			return allSources[index % allSources.length]
+		}
+		
+		return "Source: Transparency Audit Log"
+	}
+	
+	return (
+		<>
+			{lines.map((line, i) => {
+				const source = getLineSource(line, i)
+				const isUrl = source.startsWith('http')
+				
+				return (
+					<div 
+						key={i}
+						className="hoverable-line"
+						onMouseEnter={() => onHighlight(source)}
+						onMouseLeave={() => onHighlight(null)}
+						onClick={() => {
+							if (isUrl) {
+								window.open(source, '_blank')
+							} else if (source.includes('http')) {
+								const urlMatch = source.match(/https?:\/\/[^\s)]+/)
+								if (urlMatch) window.open(urlMatch[0], '_blank')
+							}
+						}}
+						style={{ cursor: isUrl || source.includes('http') ? 'pointer' : 'default' }}
+					>
+						{line}
+					</div>
+				)
+			})}
+		</>
+	)
+}
+
+function extractSourcesFromTrace(traceText: string): string[] {
+	const sources: string[] = []
+	
+	// Extract URLs from trace text
+	const urlRegex = /https?:\/\/[^\s)]+/g
+	const urls = traceText.match(urlRegex)
+	if (urls) {
+		sources.push(...urls)
+	}
+	
+	// Extract tool names
+	if (traceText.includes('Semantic Scholar')) sources.push('Source: Semantic Scholar API')
+	if (traceText.includes('OpenAlex')) sources.push('Source: OpenAlex API')
+	if (traceText.includes('CrossRef')) sources.push('Source: CrossRef API')
+	if (traceText.includes('Valyu')) sources.push('Source: Valyu Search')
+	
+	// Fallback
+	if (sources.length === 0) {
+		sources.push('Source: LLM Internal Knowledge')
+	}
+	
+	return sources
+}
+
+function parseExpertsFromResponse(response: string): Expert[] {
+	const experts: Expert[] = []
+	
+	// Match numbered list items like "1. Dr. Name" or "1. Prof. Name"
+	const expertPattern = /\d+\.\s*(?:Dr\.|Prof\.|Professor)?\s*([^\n]+)/g
+	const matches = response.matchAll(expertPattern)
+	
+	for (const match of matches) {
+		const fullText = match[0]
+		const nameMatch = fullText.match(/\d+\.\s*(?:Dr\.|Prof\.|Professor)?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)/)
+		
+		if (nameMatch) {
+			const name = nameMatch[1].trim()
+			
+			// Extract details from the lines following the name
+			const lines = response.split('\n')
+			const expertIndex = lines.findIndex(line => line.includes(name))
+			
+			let title = ""
+			let affiliation = ""
+			let location = ""
+			let summary = ""
+			let areas: string[] = []
+			let website = ""
+			let email = ""
+			
+			if (expertIndex >= 0) {
+				// Look at the next few lines for details
+				for (let i = expertIndex + 1; i < Math.min(expertIndex + 5, lines.length); i++) {
+					const line = lines[i].trim()
+					if (line.startsWith('-')) {
+						const detail = line.substring(1).trim()
+						
+						if (detail.match(/professor|director|founder|inventor|co-founder/i)) {
+							if (!title) title = detail
+							
+							// Extract affiliation from title
+							const atMatch = detail.match(/at\s+([^,\n]+)/i)
+							if (atMatch && !affiliation) {
+								affiliation = atMatch[1].trim()
+							}
+						} else if (detail.match(/university|institute|lab|company/i) && !affiliation) {
+							affiliation = detail
+						} else {
+							if (!summary) summary = detail
+							else summary += " " + detail
+						}
+					} else if (line && !line.match(/^\d+\./)) {
+						// Part of the previous expert's description
+						if (summary) summary += " " + line
+					} else {
+						break // Next expert
+					}
+				}
+				
+				// Generate website based on affiliation
+				if (affiliation) {
+					const affiliationLower = affiliation.toLowerCase()
+					if (affiliationLower.includes('harvard')) website = 'https://www.harvard.edu'
+					else if (affiliationLower.includes('mit')) website = 'https://www.mit.edu'
+					else if (affiliationLower.includes('stanford')) website = 'https://www.stanford.edu'
+					else if (affiliationLower.includes('penn state')) website = 'https://www.psu.edu'
+					else if (affiliationLower.includes('virginia tech')) website = 'https://www.vt.edu'
+					else if (affiliationLower.includes('southern california') || affiliationLower.includes('usc')) website = 'https://www.usc.edu'
+					else if (affiliationLower.includes('tu delft') || affiliationLower.includes('delft')) website = 'https://www.tudelft.nl'
+					else if (affiliationLower.includes('missouri')) website = 'https://www.mst.edu'
+					else {
+						// Generic university search
+						const cleanAffiliation = affiliation.replace(/[^a-zA-Z\s]/g, '').trim().replace(/\s+/g, '+')
+						website = `https://www.google.com/search?q=${cleanAffiliation}`
+					}
+				}
+			}
+			
+			experts.push({
+				name,
+				title: title || undefined,
+				affiliation: affiliation || undefined,
+				location: location || undefined,
+				summary: summary || undefined,
+				areas: areas.length > 0 ? areas : undefined,
+				website: website || undefined,
+				email: email || undefined
+			})
+		}
+	}
+	
+	return experts
+}
+
+function TransparencyAudit({ traceText, highlightedSource }: { traceText: string, highlightedSource: string | null }) {
+	// Parse the trace text to extract sections and filter out unwanted content
+	const sections = traceText
+		.split('\n')
+		.filter(line => {
+			const trimmed = line.trim()
+			// Filter out the Simple LLM Audit section
+			if (trimmed.includes('Simple LLM Audit')) return false
+			if (trimmed.includes('No external tools required')) return false
+			if (trimmed.includes('internal knowledge base')) return false
+			return trimmed.length > 0
+		})
+	
+	// If no meaningful content after filtering, return empty
+	if (sections.length === 0) {
+		return <div className="audit-content"></div>
+	}
+	
+	return (
+		<div className="audit-content">
+			{highlightedSource && (
+				<div className="source-highlight magnify">
+					<strong>🔍 Active Source:</strong> {highlightedSource}
+				</div>
+			)}
+			{sections.map((line, i) => {
+				// Check if this line contains relevant info about the highlighted source
+				const isRelevant = highlightedSource && (
+					line.toLowerCase().includes(highlightedSource.toLowerCase()) ||
+					(highlightedSource.includes('http') && line.includes('URL')) ||
+					(highlightedSource.includes('Semantic Scholar') && line.includes('Semantic Scholar')) ||
+					(highlightedSource.includes('OpenAlex') && line.includes('OpenAlex')) ||
+					(highlightedSource.includes('CrossRef') && line.includes('CrossRef')) ||
+					(highlightedSource.includes('Valyu') && line.includes('Valyu')) ||
+					line.includes('Action') || line.includes('Tools') || line.includes('Observation')
+				)
+				return (
+					<div 
+						key={i}
+						className={`audit-line ${isRelevant ? 'magnify' : ''}`}
+					>
+						{line}
+					</div>
+				)
+			})}
 		</div>
 	)
 }

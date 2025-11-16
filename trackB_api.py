@@ -7,22 +7,22 @@ from pydantic import BaseModel
 import importlib.util
 import sys
 
-# Load the trackB2 script as a module (file has no .py extension)
+# Load the vers4 script as a module (file has no .py extension)
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
-TRACKB2_PATH = os.path.join(PROJECT_ROOT, "trackB2")
+VERS4_PATH = os.path.join(PROJECT_ROOT, "vers4")
 
-# Read and execute the trackB2 file with proper encoding
-trackB2_namespace = {}
-with open(TRACKB2_PATH, 'r', encoding='utf-8') as f:
-	exec(f.read(), trackB2_namespace)
+# Read and execute the vers4 file with proper encoding
+vers4_namespace = {}
+with open(VERS4_PATH, 'r', encoding='utf-8') as f:
+	exec(f.read(), vers4_namespace)
 
 # Create a simple module-like object
-class TrackB2Module:
+class Vers4Module:
 	def __init__(self, namespace):
 		for key, value in namespace.items():
 			setattr(self, key, value)
 
-trackB2 = TrackB2Module(trackB2_namespace)
+vers4 = Vers4Module(vers4_namespace)
 
 # FastAPI app
 app = FastAPI(title="Track B API")
@@ -41,10 +41,10 @@ class ChatRequest(BaseModel):
 @app.post("/chat")
 async def chat(req: ChatRequest):
 	"""
-	Call the agent logic from trackB2 and return answer and trace.
+	Call the agent logic from vers4 and return answer and trace.
 	"""
 	try:
-		# Convert history format if needed (trackB2 expects list of [user, assistant] pairs)
+		# Convert history format if needed (vers4 expects list of [user, assistant] pairs)
 		history_list = []
 		if req.history:
 			for msg in req.history:
@@ -55,8 +55,8 @@ async def chat(req: ChatRequest):
 				elif role == "assistant" and history_list:
 					history_list[-1][1] = content
 		
-		# Call the trackB2 agent logic
-		new_history, trace_text = trackB2.agent_chat_logic(req.message, history_list)
+		# Call the vers4 agent logic
+		new_history, trace_text = vers4.agent_chat_logic(req.message, history_list)
 		
 		# Extract the final answer (last assistant response)
 		final_answer = ""
@@ -69,7 +69,7 @@ async def chat(req: ChatRequest):
 		# Return answer and trace info
 		return {
 			"answer": final_answer,
-			"trace_url": None,  # trackB2 doesn't use LangSmith traces
+			"trace_url": None,  # vers4 doesn't use LangSmith traces
 			"trace_text": trace_text
 		}
 	except Exception as e:
@@ -82,6 +82,7 @@ async def chat(req: ChatRequest):
 if __name__ == "__main__":
 	import uvicorn
 	print("Starting Track B API on http://127.0.0.1:5000")
-	print("Using trackB2 backend with Holistic AI Bedrock Proxy")
+	print("Using vers4 backend with Holistic AI Bedrock Proxy")
+	print("Academic APIs: Semantic Scholar + OpenAlex + CrossRef")
 	uvicorn.run(app, host="127.0.0.1", port=5000)
 
