@@ -163,13 +163,7 @@ export default function Page() {
 							<option>Europe</option>
 							<option>Asia</option>
 						</select>
-						<input className="text" placeholder="Use last prompt keywords or type new…" value={input} onChange={e => setInput(e.target.value)} />
-						<div className="row">
-							<input className="text" style={{ width: 90 }} type="number" min={1} max={20} value={count} onChange={e => setCount(parseInt(e.target.value || "5", 10))} />
-							<button className="button" onClick={() => fetchExpertsFromQuery(input || messages[messages.length-1]?.content || "")} disabled={expertsLoading}>
-								{expertsLoading ? "Searching…" : "Find experts"}
-							</button>
-						</div>
+						<input className="text" style={{ width: 90 }} type="number" min={1} max={20} value={count} onChange={e => setCount(parseInt(e.target.value || "5", 10))} />
 					</div>
 					<div className="results">
 						{expertsError && <div className="expert-card"><div className="expert-title">Error</div><div className="expert-meta">{expertsError}</div></div>}
