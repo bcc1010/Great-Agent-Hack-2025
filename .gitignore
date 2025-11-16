@@ -1,0 +1,61 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Node / Next.js
+web/node_modules/
+web/.next/
+web/.turbo/
+web/out/
+web/.env*
+web/npm-debug.log*
+web/yarn-error.log*
+web/pnpm-debug.log*
+
+# General Node at root (just in case)
+node_modules/
+.next/
+.turbo/
+out/
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# TypeScript
+*.tsbuildinfo
+
+# Vite/Turbo/Cache
+.cache/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+pip-wheel-metadata/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Env
+.env
+.env.*
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Coverage / Reports
+coverage/
+dist/
+build/
+
+# Misc
+*.log
+
