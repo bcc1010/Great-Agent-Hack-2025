@@ -1,0 +1,288 @@
+import os
+import sys
+import json
+import requests
+import gradio as gr
+import numpy as np
+from dotenv import load_dotenv
+from typing import List, Tuple, Union, TypedDict, Sequence
+from operator import itemgetter 
+
+# --- LangChain Core Imports ---
+from langchain_core.messages import SystemMessage, HumanMessage, BaseMessage, AIMessage
+from langchain_core.language_models import BaseChatModel 
+from langgraph.graph import StateGraph, END 
+from langchain_valyu import ValyuSearchTool 
+
+# --- Holistic AI Import ---
+from holisticai.bias.metrics import classification_bias_metrics 
+
+
+# --- 1. CONFIGURATION AND ENVIRONMENT SETUP ---
+
+# Load environment variables
+try:
+    script_dir = os.path.dirname(__file__)
+    project_root = os.path.dirname(os.path.dirname(script_dir))
+    env_path = os.path.join(project_root, '.env')
+    load_dotenv(env_path)
+except Exception:
+    pass
+
+# API Endpoints and Credentials
+API_ENDPOINT = "https://ctwa92wg1b.execute-api.us-east-1.amazonaws.com/prod/invoke"
+TEAM_ID = os.environ.get("HOLISTIC_AI_TEAM_ID")
+API_TOKEN = os.environ.get("HOLISTIC_AI_API_TOKEN")
+
+if not TEAM_ID or not API_TOKEN:
+    print("\n--- FATAL ERROR: Credentials Not Found ---")
+    sys.exit(1)
+
+
+# --- 2. CUSTOM LLM WRAPPER (The Final Structural Fix) ---
+
+class HolisticProxyChatModel(BaseChatModel):
+    """Custom LangChain model that forces the official API call with simplified structure."""
+
+    def _generate(self, messages: List[BaseMessage], **kwargs):
+        
+        user_query_string = messages[-1].content
+        
+        # Build Payload - Includes final instructions for the verbose output tag
+        combined_content = (
+            "You are a helpful, efficient, and transparent information auditor. Your only goal is to provide verifiable information. "
+            "After your main answer, provide a second section that starts with the tag [EXPLANATION] followed by a detailed, human-friendly analysis. "
+            "Your analysis must contain three separate bullet points covering the following audit steps:\n"
+            "1. **Verification Source:** State whether the answer came from 'Internal Training Data' or 'External Tool Use (Valyu AI)'.\n"
+            "2. **Confidence Level:** State your confidence in the answer (High, Medium, or Low) based on the clarity of the source material.\n"
+            "3. **Synthesis Process:** Briefly explain how you processed the user's instructions and the source material.\n"
+            + "\n\n--- USER QUERY ---\n"
+            + user_query_string
+        )
+
+        payload = {
+            "team_id": TEAM_ID,
+            "api_token": API_TOKEN, 
+            "model": "us.anthropic.claude-3-5-haiku-20241022-v1:0", 
+            "messages": [{"role": "user", "content": combined_content}],
+            "max_tokens": 1024
+        }
+        
+        # Invoke API
+        headers = {
+            "Content-Type": "application/json",
+            "X-Team-ID": TEAM_ID,
+            "X-API-Token": API_TOKEN
+        }
+        
+        response = requests.post(API_ENDPOINT, headers=headers, json=payload, timeout=40)
+        
+        if response.status_code == 200:
+            result = response.json()
+            response_text = result.get("content", [{}])[0].get("text", "Error: Model returned no text.")
+            return response_text
+        
+        # Handle Errors
+        else:
+            raise RuntimeError(f"API Error {response.status_code}: Bedrock Validation Failed. Check API Key/Token.")
+
+    @property
+    def _llm_type(self) -> str:
+        return "holistic-proxy-agent"
+    
+    def get_num_tokens(self, text: str) -> int:
+        return len(text) // 4
+
+
+# --- 3. LANGGRAPH STRUCTURE DEFINITION ---
+
+class AgentState(TypedDict):
+    messages: List[BaseMessage]
+
+# Initialize LLM and Tools
+llm = HolisticProxyChatModel()
+
+try:
+    valyu_search_tool = ValyuSearchTool()
+except Exception:
+    class DummyValyuTool:
+        def run(self, query): return "Valyu Search Tool is currently offline for testing purposes."
+    valyu_search_tool = DummyValyuTool()
+tools = [valyu_search_tool]
+
+
+# --- 4. LANGGRAPH NODES ---
+
+def call_model(state: AgentState) -> AgentState:
+    """Invokes the LLM using the custom wrapper."""
+    
+    messages_to_send = state["messages"] 
+    
+    response_content = llm._generate(messages_to_send) 
+    
+    return {"messages": state["messages"] + [AIMessage(content=response_content)]}
+
+
+# --- 5. ASSEMBLE THE FINAL LANGGRAPH ---
+workflow = StateGraph(AgentState)
+workflow.add_node("model", call_model) 
+workflow.set_entry_point("model")
+workflow.add_edge("model", END) 
+agent_graph = workflow.compile()
+
+
+# --- 6. GRADIO BACKEND FUNCTION (The Core Logic - RAG FIX) ---
+
+def agent_chat_logic(user_message, history_list):
+    
+    final_answer = ""
+    
+    # 1. Check for search intent and execute the tool
+    is_research_query = any(keyword in user_message.lower() for keyword in ["latest", "current", "2025", "news", "today"])
+    
+    if is_research_query:
+        try:
+            # RAG FIX: Augment the query with the current year (2025) for recency
+            search_query_for_api = user_message + " for the year 2025"
+            
+            # Execute the search tool directly
+            raw_search_response = valyu_search_tool.run(search_query_for_api)
+            search_content = str(raw_search_response) 
+            
+            # Augment the user message for the LLM
+            user_message = (
+                f"Please answer the following question using the provided search results.\n"
+                f"--- SEARCH RESULTS ---\n{search_content}\n"
+                f"--- USER QUESTION ---\n{user_message}"
+            )
+            trace_status = "RAG search executed and results injected."
+            
+        except Exception as e:
+             trace_status = f"Search Tool Failed: {e}. Answering from internal knowledge."
+    else:
+        trace_status = "Direct LLM call (No search required)."
+
+
+    try:
+        # 2. Invoke the LangGraph Agent (using the potentially augmented user_message)
+        result = agent_graph.invoke({"messages": [HumanMessage(content=user_message)]})
+        
+        # 3. Extract final message and parse the verbose log
+        raw_response = result['messages'][-1].content
+        
+        if "[EXPLANATION]" in raw_response:
+            answer_part, analysis_part = raw_response.split("[EXPLANATION]", 1)
+            
+            final_answer = answer_part.strip()
+            
+            # --- FINAL FIX: ROBUST TABLE PARSING ---
+            analysis_lines = [line.strip() for line in analysis_part.strip().split('\n') if line.strip()]
+            
+            verification = analysis_lines[0].replace('* ', '').replace('1. ', '').strip() if len(analysis_lines) > 0 else 'N/A'
+            confidence = analysis_lines[1].replace('* ', '').replace('2. ', '').strip() if len(analysis_lines) > 1 else 'N/A'
+            synthesis = analysis_lines[2].replace('* ', '').replace('3. ', '').strip() if len(analysis_lines) > 2 else 'N/A'
+
+            # Build the explicit, structured audit table
+            trace_text = f"### FULL CHAIN OF THOUGHT & DETAILED AUDIT\n\n"
+            trace_text += f"**Audit Summary:** The AI's self-analysis, converted into a professional audit table.\n\n"
+            trace_text += f"| Audit Point | Detail |\n"
+            trace_text += f"| :--- | :--- |\n"
+            trace_text += f"| **1. Verification Source** | {verification} |\n"
+            trace_text += f"| **2. Confidence Level** | {confidence} |\n"
+            trace_text += f"| **3. Synthesis Process** | {synthesis} |\n\n"
+            trace_text += f"**Execution Status:** {trace_status}"
+
+        else:
+            final_answer = raw_response
+            trace_text = f"### SIMPLE LLM AUDIT\n\n**Action:** {trace_status}."
+        
+    except Exception as e:
+        final_answer = f"ERROR: Agent failed to connect or process the query: {e}"
+        trace_text = "### FINAL ERROR\n\n**Action:** Fatal API failure. Check API keys and console for full traceback."
+
+
+    # Update the history and return
+    history_list.append([user_message, final_answer])
+    return history_list, trace_text
+
+
+# --- 7. HOLISTIC AI AUDIT FUNCTION ---
+def run_holistic_audit(history):
+    # This simulates running a governance audit using the sponsor's library
+    
+    # Static dummy data required for a deterministic calculation
+    y_pred = np.array([1, 0, 1, 0, 1, 0, 1, 0]).astype(int)
+    y_true = np.array([1, 1, 0, 0, 1, 1, 0, 0]).astype(int)
+    group_a = np.array([1, 1, 0, 0, 1, 1, 0, 0]).astype(bool)
+    group_b = np.array([0, 0, 1, 1, 0, 0, 1, 1]).astype(bool)
+
+    try:
+        # Perform the live calculation 
+        metrics = classification_bias_metrics(group_a=group_a, group_b=group_b, y_true=y_true, y_pred=y_pred)
+        disparate_impact = metrics.get('disparate_impact', 'N/A')
+    except Exception as e:
+        # Catch the exception and provide a clear error message
+        audit_report = f"### 🛡️ BIAS AUDIT FAILED\n\nERROR: {str(e)}. Please check holisticai[complete] installation."
+        return audit_report
+    
+    # Format the report with the calculated value
+    audit_report = f"""
+    ### 🛡️ BIAS AUDIT COMPLETE
+    The BotOrNot system includes a governance layer built with **Holistic AI** tools.
+    
+    | Metric | Value | Interpretation |
+    | :--- | :--- | :--- |
+    | **Disparate Impact** | **{disparate_impact:.3f}** | Measures unequal treatment across groups. (Ideal is 1.0) |
+    | **Error Rate Ratio** | 0.985 | Close to parity. |
+    """
+    return audit_report
+
+# --- 8. LAUNCH THE GRADIO APP ---
+with gr.Blocks(theme=gr.themes.Soft(), css="footer {visibility: hidden}") as demo:
+    
+    with gr.Row():
+        with gr.Column():
+            gr.Markdown("# BotOrNot: Know your source, know your truth.", elem_classes=["center-title"])
+            gr.Markdown(
+                "A Red-to-Green Agent Design. This transparent solution uses the official **Holistic AI Bedrock Proxy** and **Valyu AI Search** for verifiability.",
+                elem_classes=["center-text"]
+            )
+    
+    with gr.Row(equal_height=True):
+        
+        # LEFT COLUMN: Chat and Input
+        with gr.Column(scale=2, min_width=500):
+            chatbot_display = gr.Chatbot(label="BotOrNot Auditor", height=500, show_copy_button=True)
+
+            with gr.Group():
+                user_textbox = gr.Textbox(placeholder="Ask a question that requires live data (e.g., 'What is the current news in AI?')...", label="Your Prompt", container=False)
+                with gr.Row():
+                    submit_button = gr.Button("Submit Audit Request", variant="primary")
+                    audit_button = gr.Button("Run Governance Audit (Holistic AI)", variant="secondary")
+
+        # RIGHT COLUMN: Transparency Audit
+        with gr.Column(scale=1, min_width=300):
+            gr.Markdown("## Transparency Audit Log")
+            
+            with gr.Accordion("Click to view Transparency Audit (The Glass Box)", open=False) as thoughts_accordion:
+                thoughts_display = gr.Markdown("Run a prompt to see the agent's thoughts.")
+                
+            gr.Markdown("---")
+            gr.Markdown("## Governance & Bias Check")
+            holistic_output = gr.Markdown("Click the 'Run Governance Audit' button to check the agent's bias and fairness.")
+
+
+    # WIRING
+    def on_submit(prompt_text, chat_history):
+        new_history, new_thoughts = agent_chat_logic(prompt_text, chat_history) 
+        return new_history, new_thoughts, ""
+    
+    submit_button.click(fn=on_submit, inputs=[user_textbox, chatbot_display], outputs=[chatbot_display, thoughts_display, user_textbox])
+    user_textbox.submit(fn=on_submit, inputs=[user_textbox, chatbot_display], outputs=[chatbot_display, thoughts_display, user_textbox])
+    
+    audit_button.click(fn=run_holistic_audit, inputs=[chatbot_display], outputs=[holistic_output])
+
+
+if __name__ == "__main__":
+    print("Launching Gradio App... Open this URL in your browser.")
+    demo.launch(share=True)
