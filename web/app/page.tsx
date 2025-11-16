@@ -22,11 +22,6 @@ export default function Page() {
 	const [traceText, setTraceText] = useState<string | null>(null)
 	const [highlightedSource, setHighlightedSource] = useState<string | null>(null)
 	const [sources, setSources] = useState<string[]>([])
-	const [tooltipPosition, setTooltipPosition] = useState<{ x: number, y: number } | null>(null)
-	const [emailModalOpen, setEmailModalOpen] = useState(false)
-	const [selectedExpert, setSelectedExpert] = useState<Expert | null>(null)
-	const [emailSubject, setEmailSubject] = useState("")
-	const [emailBody, setEmailBody] = useState("")
 	const listRef = useRef<HTMLDivElement>(null)
 
 	// Experts search state on the same page
@@ -45,52 +40,25 @@ export default function Page() {
 
 	const canSend = useMemo(() => input.trim().length > 0 && !loading, [input, loading])
 
-	async function fetchExpertsFromConversation(conversationText: string, keywords: string) {
+	async function fetchExpertsFromQuery(keywords: string) {
 		try {
 			setExpertsLoading(true)
 			setExpertsError(null)
-			
-			// Parse expert names from the conversation
-			const expertNames = parseExpertNamesFromText(conversationText)
-			
-			// Fetch structured data for these experts
 			const res = await fetch("/api/experts", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ 
-					category, 
-					location, 
-					keywords: expertNames.length > 0 ? expertNames.join(", ") : keywords, 
-					count: expertNames.length || count 
-				})
+				body: JSON.stringify({ category, location, keywords, count })
 			})
 			if (!res.ok) throw new Error(`HTTP ${res.status}`)
 			const data = await res.json() as { experts?: Expert[], error?: string }
 			if (data.error) throw new Error(data.error)
-			
-			// Match experts by name from conversation
-			const matchedExperts = (data.experts ?? []).filter(expert => 
-				expertNames.some(name => expert.name.includes(name) || name.includes(expert.name))
-			)
-			
-			setExperts(matchedExperts.length > 0 ? matchedExperts : (data.experts ?? []))
+			setExperts(data.experts ?? [])
 		} catch (e: any) {
 			setExpertsError(e?.message ?? String(e))
 			setExperts([])
 		} finally {
 			setExpertsLoading(false)
 		}
-	}
-
-	function parseExpertNamesFromText(text: string): string[] {
-		const names: string[] = []
-		// Match patterns like "1. Dr. Name" or "1. Prof. Name"
-		const pattern = /\d+\.\s*(?:Dr\.|Prof\.|Professor)?\s*([A-Z][a-z]+(?:\s+[A-Z]\.?)?\s+[A-Z][a-z]+)/g
-		const matches = text.matchAll(pattern)
-		for (const match of matches) {
-			if (match[1]) names.push(match[1].trim())
-		}
-		return names
 	}
 
 	async function onSend() {
@@ -116,8 +84,8 @@ export default function Page() {
 			const extractedSources = extractSourcesFromTrace(data.trace_text || "")
 			setSources(extractedSources)
 
-			// Parse experts from the conversation and fetch structured data
-			await fetchExpertsFromConversation(data.answer ?? "", userMsg.content)
+			// Also populate Experts panel from the same query intent
+			fetchExpertsFromQuery(userMsg.content)
 		} catch (e: any) {
 			const aiMsg: ChatMessage = { role: "assistant", content: `An error occurred: ${e?.message ?? String(e)}` }
 			setMessages(prev => [...prev, aiMsg])
@@ -130,28 +98,6 @@ export default function Page() {
 		if (e.key === "Enter" && !e.shiftKey) {
 			e.preventDefault()
 			onSend()
-		}
-	}
-
-	function openEmailModal(expert: Expert) {
-		setSelectedExpert(expert)
-		setEmailSubject(`Collaboration Opportunity - ${expert.name}`)
-		setEmailBody(`Dear ${expert.name},\n\nI came across your work in ${expert.affiliation || 'your field'} and was impressed by your expertise${expert.areas && expert.areas.length > 0 ? ` in ${expert.areas.join(', ')}` : ''}.\n\nI would like to discuss a potential collaboration opportunity.\n\nBest regards,`)
-		setEmailModalOpen(true)
-	}
-
-	function closeEmailModal() {
-		setEmailModalOpen(false)
-		setSelectedExpert(null)
-		setEmailSubject("")
-		setEmailBody("")
-	}
-
-	function sendEmail() {
-		if (selectedExpert?.email) {
-			const mailtoLink = `mailto:${selectedExpert.email}?subject=${encodeURIComponent(emailSubject)}&body=${encodeURIComponent(emailBody)}`
-			window.location.href = mailtoLink
-			closeEmailModal()
 		}
 	}
 
@@ -187,15 +133,7 @@ export default function Page() {
 							{m.role === "assistant" ? (
 								<HighlightableText 
 									text={m.content} 
-									onHighlight={(source, event) => {
-										setHighlightedSource(source)
-										if (source && event) {
-											const rect = event.currentTarget.getBoundingClientRect()
-											setTooltipPosition({ x: rect.right + 10, y: rect.top })
-										} else {
-											setTooltipPosition(null)
-										}
-									}}
+									onHighlight={setHighlightedSource}
 									sources={sources}
 									experts={experts || []}
 								/>
@@ -220,7 +158,6 @@ export default function Page() {
 					</button>
 				</div>
 				</div>
-				
 				<div className="card fill">
 					<div className="header">Transparency Audit Log</div>
 					
@@ -274,81 +211,21 @@ export default function Page() {
 						{!expertsError && experts && experts.length === 0 && <div className="muted">No experts found. Try different keywords or a broader location.</div>}
 						{!expertsError && !experts && <div className="muted">Use the conversation or the controls above to generate experts. Results will appear here.</div>}
 						{experts && experts.map((ex, i) => (
-							<ExpertCard key={i} expert={ex} traceUrl={traceUrl} onEmailClick={openEmailModal} />
+							<ExpertCard key={i} expert={ex} traceUrl={traceUrl} />
 						))}
 					</div>
 				</div>
 			</div>
-			
-			{/* Email Modal */}
-			{emailModalOpen && selectedExpert && (
-				<div className="modal-overlay" onClick={closeEmailModal}>
-					<div className="modal-content" onClick={(e) => e.stopPropagation()}>
-						<div className="modal-header">
-							<h2>✉️ Compose Email to {selectedExpert.name}</h2>
-							<button className="modal-close" onClick={closeEmailModal}>×</button>
-						</div>
-						<div className="modal-body">
-							<div className="expert-preview">
-								<img 
-									src={`https://ui-avatars.com/api/?name=${encodeURIComponent(selectedExpert.name || 'Expert')}&size=48&background=f97316&color=fff&bold=true`}
-									alt={selectedExpert.name}
-									className="modal-avatar"
-								/>
-								<div>
-									<div className="modal-expert-name">{selectedExpert.name}</div>
-									<div className="modal-expert-meta">{selectedExpert.title} • {selectedExpert.affiliation}</div>
-									{selectedExpert.email && <div className="modal-expert-email">To: {selectedExpert.email}</div>}
-								</div>
-							</div>
-							
-							<div className="form-group">
-								<label htmlFor="email-subject">Subject</label>
-								<input
-									id="email-subject"
-									type="text"
-									className="modal-input"
-									value={emailSubject}
-									onChange={(e) => setEmailSubject(e.target.value)}
-								/>
-							</div>
-							
-							<div className="form-group">
-								<label htmlFor="email-body">Message</label>
-								<textarea
-									id="email-body"
-									className="modal-textarea"
-									value={emailBody}
-									onChange={(e) => setEmailBody(e.target.value)}
-									rows={12}
-								/>
-							</div>
-						</div>
-						<div className="modal-footer">
-							<button className="button button-secondary" onClick={closeEmailModal}>
-								Cancel
-							</button>
-							<button className="button button-primary" onClick={sendEmail}>
-								📧 Send Email
-							</button>
-						</div>
-					</div>
-				</div>
-			)}
 		</>
 	)
 }
 
-function ExpertCard({ expert, traceUrl, onEmailClick }: { expert: Expert, traceUrl: string | null, onEmailClick: (expert: Expert) => void }) {
+function ExpertCard({ expert, traceUrl }: { expert: Expert, traceUrl: string | null }) {
 	const [open, setOpen] = useState(false)
-	// Generate profile picture URL using UI Avatars
-	const profilePicUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(expert.name || 'Expert')}&size=64&background=f97316&color=fff&bold=true`
-	
 	return (
 		<div className="expert-card">
 			<div className="expert-header">
-				<img src={profilePicUrl} alt={expert.name} className="expert-avatar" />
-				<div className="expert-header-text">
+				<div>
 					<div className="expert-title has-source">
 						{expert.name || "Unnamed expert"}
 						<span className="tooltip">Source: {expert.website || expert.email || traceUrl || "See LangSmith trace"}</span>
@@ -376,13 +253,11 @@ function ExpertCard({ expert, traceUrl, onEmailClick }: { expert: Expert, traceU
 						<span className="tooltip">Source: {traceUrl || "LangSmith trace"}</span>
 					</div>
 					<div className="row">
+						{expert.email && <a className="nav-link" href={`mailto:${expert.email}`} target="_blank">Email</a>}
 						{expert.website && <a className="nav-link" href={expert.website} target="_blank">Website</a>}
 						{traceUrl && <a className="nav-link" href={traceUrl} target="_blank">Trace</a>}
 					</div>
-					<button className="button email-button" onClick={() => onEmailClick(expert)}>
-						✉️ Write Bespoke Email
-					</button>
-					<div style={{ display: 'none' }}>
+					<div>
 						<div className="small muted">Tailor an email to this expert:</div>
 						<textarea className="email-box" defaultValue={`Dear ${expert.name || "Expert"},
 
@@ -399,70 +274,53 @@ Your Name`} />
 
 function HighlightableText({ text, onHighlight, sources, experts }: { 
 	text: string, 
-	onHighlight: (source: string | null, event?: React.MouseEvent<HTMLDivElement>) => void,
+	onHighlight: (source: string | null) => void,
 	sources: string[],
 	experts: Expert[]
 }) {
-	// Split text into lines for hoverable segments
-	const lines = text.split('\n').filter(line => line.trim())
+	// Split text into sentences for hoverable segments
+	const sentences = text.split(/(?<=[.!?])\s+/)
 	
-	// Generate sources for each line from experts or trace data
-	const getLineSource = (line: string, index: number): string => {
-		// Check if line is a bullet point (expert description)
-		const isBulletPoint = line.trim().startsWith('-')
-		
-		// For bullet points, cycle through API sources
-		if (isBulletPoint && sources.length > 0) {
-			return sources[index % sources.length]
-		}
-		
-		// For expert names, try to find their website
-		for (const expert of experts) {
-			if (line.includes(expert.name)) {
-				return expert.website || `https://scholar.google.com/scholar?q=${encodeURIComponent(expert.name)}`
-			}
-		}
-		
-		// Cycle through all sources
-		if (sources.length > 0) {
-			return sources[index % sources.length]
-		}
-		
-		// Fallback to expert websites
+	// Generate sources for each sentence from experts or trace data
+	const getSentenceSource = (index: number): string => {
+		// Cycle through expert sources
 		if (experts.length > 0) {
 			const expertIndex = index % experts.length
 			const expert = experts[expertIndex]
-			return expert.website || `https://scholar.google.com/scholar?q=${encodeURIComponent(expert.name)}`
+			return expert.website || expert.email || `Expert: ${expert.name}` || "Source unavailable"
 		}
-		
+		// Fallback to generic sources
+		if (sources.length > 0) {
+			return sources[index % sources.length]
+		}
 		return "Source: Transparency Audit Log"
 	}
 	
 	return (
 		<>
-			{lines.map((line, i) => {
-				const source = getLineSource(line, i)
+			{sentences.map((sentence, i) => {
+				const source = getSentenceSource(i)
 				const isUrl = source.startsWith('http')
-				const isBulletPoint = line.trim().startsWith('-')
 				
 				return (
-					<div 
+					<span 
 						key={i}
-						className={isBulletPoint ? "hoverable-line bullet-line" : "hoverable-line"}
-						onMouseEnter={(e) => onHighlight(source, e)}
+						className="hoverable-text"
+						onMouseEnter={() => onHighlight(source)}
 						onMouseLeave={() => onHighlight(null)}
 						onClick={() => {
 							if (isUrl) {
 								window.open(source, '_blank')
 							} else if (source.includes('http')) {
+								// Extract URL from text like "Expert: name (url)"
 								const urlMatch = source.match(/https?:\/\/[^\s)]+/)
 								if (urlMatch) window.open(urlMatch[0], '_blank')
 							}
 						}}
 						style={{ cursor: isUrl || source.includes('http') ? 'pointer' : 'default' }}
 					>
-						{line}
-					</div>
+						{sentence}{i < sentences.length - 1 ? " " : ""}
+					</span>
 				)
 			})}
 		</>
@@ -506,8 +364,33 @@ function TransparencyAudit({ traceText, highlightedSource }: { traceText: string
 			return trimmed.length > 0
 		})
 	
+	// Parse the trace text for structured display
+	const parseTraceStructure = (text: string) => {
+		const lines = text.split('\n')
+		let title = ""
+		let action = ""
+		let tools = ""
+		let observation = ""
+		
+		for (const line of lines) {
+			if (line.startsWith('###')) {
+				title = line.replace('###', '').trim()
+			} else if (line.includes('**Action:**')) {
+				action = line.replace('**Action:**', '').trim()
+			} else if (line.includes('**Tools:**')) {
+				tools = line.replace('**Tools:**', '').trim()
+			} else if (line.includes('**Observation:**')) {
+				observation = line.replace('**Observation:**', '').trim()
+			}
+		}
+		
+		return { title, action, tools, observation }
+	}
+	
+	const structure = parseTraceStructure(traceText)
+	
 	// If no meaningful content after filtering, return empty
-	if (sections.length === 0) {
+	if (sections.length === 0 && !structure.title) {
 		return <div className="audit-content"></div>
 	}
 	
@@ -518,6 +401,33 @@ function TransparencyAudit({ traceText, highlightedSource }: { traceText: string
 					<strong>🔍 Active Source:</strong> {highlightedSource}
 				</div>
 			)}
+			
+			{/* Structured reasoning display */}
+			{structure.title && (
+				<div className="reasoning-section">
+					<div className="reasoning-title">{structure.title}</div>
+					{structure.action && (
+						<div className="reasoning-item">
+							<div className="reasoning-label">🎯 Action</div>
+							<div className="reasoning-value">{structure.action}</div>
+						</div>
+					)}
+					{structure.tools && (
+						<div className="reasoning-item">
+							<div className="reasoning-label">🔧 Tools Used</div>
+							<div className="reasoning-value">{structure.tools}</div>
+						</div>
+					)}
+					{structure.observation && (
+						<div className="reasoning-item">
+							<div className="reasoning-label">📊 Observation</div>
+							<div className="reasoning-value">{structure.observation}</div>
+						</div>
+					)}
+				</div>
+			)}
+			
+			{/* Raw audit lines */}
 			{sections.map((line, i) => {
 				// Check if this line contains relevant info about the highlighted source
 				const isRelevant = highlightedSource && (

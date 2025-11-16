@@ -28,8 +28,8 @@ API_ENDPOINT = "https://ctwa92wg1b.execute-api.us-east-1.amazonaws.com/prod/invo
 
 # Hardcoded credentials (fallback to environment variables)
 TEAM_ID = os.environ.get("HOLISTIC_AI_TEAM_ID", "team_the_great_hack_2025_035")
-API_TOKEN = os.environ.get("HOLISTIC_AI_API_TOKEN", "riUUwey_QPVMbxUp96tEOQkyPI9mZpXGX2CWkQBWm34")
-VALYU_API_KEY = os.environ.get("VALYU_API_KEY", "zQGxtquaju7zu8fWQXqi76DO91AEesJx7nBMCDwB")
+API_TOKEN = os.environ.get("HOLISTIC_AI_API_TOKEN", "PTUUWey_QPVMbXUp96tEOQKyPT9mZpxGX2OxGYBPT9mZpxGX2OxGYB")
+VALYU_API_KEY = os.environ.get("VALYU_API_KEY", "ZQGxtquaju7zu8fWQXq176DO91AEesJX7nBMCDwB")
 
 # Set Valyu key in environment for the tool
 os.environ["VALYU_API_KEY"] = VALYU_API_KEY
