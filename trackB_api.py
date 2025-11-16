@@ -7,18 +7,25 @@ from pydantic import BaseModel
 import importlib.util
 import sys
 
-# Load the existing trackB script as a module (file has no .py extension)
+# Load the trackB2 script as a module (file has no .py extension)
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
-TRACKB_PATH = os.path.join(PROJECT_ROOT, "trackB")
-spec = importlib.util.spec_from_file_location("trackB_module", TRACKB_PATH)
-if spec is None or spec.loader is None:
-	raise RuntimeError("Unable to load trackB module from path.")
-trackB = importlib.util.module_from_spec(spec)
-sys.modules["trackB_module"] = trackB
-spec.loader.exec_module(trackB)
+TRACKB2_PATH = os.path.join(PROJECT_ROOT, "trackB2")
+
+# Read and execute the trackB2 file with proper encoding
+trackB2_namespace = {}
+with open(TRACKB2_PATH, 'r', encoding='utf-8') as f:
+	exec(f.read(), trackB2_namespace)
+
+# Create a simple module-like object
+class TrackB2Module:
+	def __init__(self, namespace):
+		for key, value in namespace.items():
+			setattr(self, key, value)
+
+trackB2 = TrackB2Module(trackB2_namespace)
 
 # FastAPI app
-app = FastAPI(title="BotOrNot TrackB API")
+app = FastAPI(title="Track B API")
 app.add_middleware(
 	CORSMiddleware,
 	allow_origins=["*"],
@@ -34,30 +41,47 @@ class ChatRequest(BaseModel):
 @app.post("/chat")
 async def chat(req: ChatRequest):
 	"""
-	Call the agent graph from trackB and return answer and trace url.
+	Call the agent logic from trackB2 and return answer and trace.
 	"""
-	trace_url: Optional[str] = None
-	final_answer: str = ""
 	try:
-		response_chunks: List[str] = []
-		for chunk in trackB.agent_graph.stream({"messages": [trackB.HumanMessage(content=req.message)]}, stream_mode="values"):
-			final_message = chunk["messages"][-1]
-			if hasattr(final_message, "config") and trace_url is None:
-				run_id = final_message.config["run_id"]
-				trace_url = f"https://smith.langchain.com/public/runs/{run_id}"
-			if getattr(final_message, "type", None) == "ai":
-				response_chunks.append(getattr(final_message, "content", ""))
-		final_answer = "".join(response_chunks)
+		# Convert history format if needed (trackB2 expects list of [user, assistant] pairs)
+		history_list = []
+		if req.history:
+			for msg in req.history:
+				role = msg.get("role", "")
+				content = msg.get("content", "")
+				if role == "user":
+					history_list.append([content, ""])
+				elif role == "assistant" and history_list:
+					history_list[-1][1] = content
+		
+		# Call the trackB2 agent logic
+		new_history, trace_text = trackB2.agent_chat_logic(req.message, history_list)
+		
+		# Extract the final answer (last assistant response)
+		final_answer = ""
+		if new_history and len(new_history) > 0:
+			final_answer = new_history[-1][1]
+		
 		if not final_answer:
-			final_answer = "The agent did not provide a final answer. Check the trace."
-		if trace_url is None:
-			trace_url = "[LangSmith Trace not available. Check API Key.]"
-		return {"answer": final_answer, "trace_url": trace_url}
+			final_answer = "The agent did not provide a final answer."
+		
+		# Return answer and trace info
+		return {
+			"answer": final_answer,
+			"trace_url": None,  # trackB2 doesn't use LangSmith traces
+			"trace_text": trace_text
+		}
 	except Exception as e:
-		return {"answer": f"An error occurred: {e}", "trace_url": "[LangSmith Trace not available. Error occurred before trace could be captured.]"}
+		return {
+			"answer": f"An error occurred: {e}",
+			"trace_url": None,
+			"trace_text": f"ERROR: {str(e)}"
+		}
 
 if __name__ == "__main__":
 	import uvicorn
-	print("Starting TrackB API on http://127.0.0.1:5000")
+	print("Starting Track B API on http://127.0.0.1:5000")
+	print("Using trackB2 backend with Holistic AI Bedrock Proxy")
 	uvicorn.run(app, host="127.0.0.1", port=5000)
 

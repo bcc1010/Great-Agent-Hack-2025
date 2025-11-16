@@ -45,6 +45,239 @@ except Exception:
         def run(self, query): return "Valyu Search Tool is currently unavailable."
     valyu_search_tool = DummyValyuTool()
 
+# --- 2b. SEMANTIC SCHOLAR API TOOL ---
+def search_semantic_scholar(query: str, limit: int = 5) -> str:
+    """
+    Search Semantic Scholar API for academic papers and research.
+    Returns formatted results with paper titles, authors, citations, and abstracts.
+    """
+    try:
+        # Semantic Scholar API endpoint (no API key required for basic usage)
+        url = "https://api.semanticscholar.org/graph/v1/paper/search"
+        params = {
+            "query": query,
+            "limit": limit,
+            "fields": "title,authors,year,citationCount,abstract,url,venue,publicationDate"
+        }
+        
+        response = requests.get(url, params=params, timeout=10)
+        
+        if response.status_code != 200:
+            return f"Semantic Scholar API error: Status {response.status_code}"
+        
+        data = response.json()
+        papers = data.get("data", [])
+        
+        if not papers:
+            return f"No papers found for query: {query}"
+        
+        # Format results
+        results = [f"Found {len(papers)} papers for '{query}':\n"]
+        for i, paper in enumerate(papers, 1):
+            title = paper.get("title", "N/A")
+            authors = ", ".join([a.get("name", "Unknown") for a in paper.get("authors", [])[:3]])
+            if len(paper.get("authors", [])) > 3:
+                authors += " et al."
+            year = paper.get("year", "N/A")
+            citations = paper.get("citationCount", 0)
+            abstract = paper.get("abstract", "No abstract available.")
+            url = paper.get("url", "")
+            venue = paper.get("venue", "N/A")
+            
+            # Truncate abstract if too long
+            if len(abstract) > 300:
+                abstract = abstract[:297] + "..."
+            
+            results.append(f"\n{i}. **{title}**")
+            results.append(f"   Authors: {authors}")
+            results.append(f"   Year: {year} | Venue: {venue} | Citations: {citations}")
+            results.append(f"   Abstract: {abstract}")
+            if url:
+                results.append(f"   URL: {url}")
+        
+        return "\n".join(results)
+    
+    except Exception as e:
+        return f"Error searching Semantic Scholar: {str(e)}"
+
+# --- 2c. OPENALEX API TOOL ---
+def search_openalex(query: str, limit: int = 5) -> str:
+    """
+    Search OpenAlex API for scholarly works, authors, institutions, and concepts.
+    Returns formatted results with comprehensive metadata.
+    """
+    try:
+        # OpenAlex API endpoint (no API key required, but polite to include email)
+        url = "https://api.openalex.org/works"
+        params = {
+            "search": query,
+            "per_page": limit,
+            "mailto": "research@trackb.ai"  # Polite pool for faster responses
+        }
+        
+        response = requests.get(url, params=params, timeout=10)
+        
+        if response.status_code != 200:
+            return f"OpenAlex API error: Status {response.status_code}"
+        
+        data = response.json()
+        works = data.get("results", [])
+        
+        if not works:
+            return f"No works found for query: {query}"
+        
+        # Format results
+        results = [f"Found {len(works)} works from OpenAlex for '{query}':\n"]
+        for i, work in enumerate(works, 1):
+            title = work.get("title", "N/A")
+            
+            # Extract authors
+            authorships = work.get("authorships", [])
+            authors = ", ".join([a.get("author", {}).get("display_name", "Unknown") for a in authorships[:3]])
+            if len(authorships) > 3:
+                authors += " et al."
+            
+            # Publication info
+            pub_year = work.get("publication_year", "N/A")
+            cited_by_count = work.get("cited_by_count", 0)
+            
+            # Source/venue
+            primary_location = work.get("primary_location", {})
+            source = primary_location.get("source", {})
+            venue = source.get("display_name", "N/A")
+            
+            # Abstract (OpenAlex uses inverted abstract index)
+            abstract_inverted = work.get("abstract_inverted_index", {})
+            if abstract_inverted:
+                # Reconstruct abstract from inverted index
+                abstract_words = []
+                for word, positions in sorted(abstract_inverted.items(), key=lambda x: min(x[1]) if x[1] else 0):
+                    abstract_words.append(word)
+                abstract = " ".join(abstract_words[:50])  # First 50 words
+                if len(abstract_words) > 50:
+                    abstract += "..."
+            else:
+                abstract = "No abstract available."
+            
+            # DOI and URL
+            doi = work.get("doi", "")
+            openalex_url = work.get("id", "")
+            
+            # Open access status
+            open_access = work.get("open_access", {})
+            is_oa = open_access.get("is_oa", False)
+            oa_status = "Open Access" if is_oa else "Closed Access"
+            
+            # Concepts/topics
+            concepts = work.get("concepts", [])[:3]
+            topics = ", ".join([c.get("display_name", "") for c in concepts]) if concepts else "N/A"
+            
+            results.append(f"\n{i}. **{title}**")
+            results.append(f"   Authors: {authors}")
+            results.append(f"   Year: {pub_year} | Venue: {venue}")
+            results.append(f"   Citations: {cited_by_count} | Access: {oa_status}")
+            results.append(f"   Topics: {topics}")
+            results.append(f"   Abstract: {abstract}")
+            if doi:
+                results.append(f"   DOI: {doi}")
+            if openalex_url:
+                results.append(f"   OpenAlex: {openalex_url}")
+        
+        return "\n".join(results)
+    
+    except Exception as e:
+        return f"Error searching OpenAlex: {str(e)}"
+
+# --- 2d. CROSSREF API TOOL ---
+def search_crossref(query: str, limit: int = 5) -> str:
+    """
+    Search CrossRef API for publication metadata including DOIs, publishers, funding, and references.
+    CrossRef is the official DOI registration agency with comprehensive metadata.
+    """
+    try:
+        # CrossRef API endpoint (no API key required, but polite to include email)
+        url = "https://api.crossref.org/works"
+        params = {
+            "query": query,
+            "rows": limit,
+            "mailto": "research@trackb.ai"  # Polite pool
+        }
+        
+        response = requests.get(url, params=params, timeout=10)
+        
+        if response.status_code != 200:
+            return f"CrossRef API error: Status {response.status_code}"
+        
+        data = response.json()
+        items = data.get("message", {}).get("items", [])
+        
+        if not items:
+            return f"No publications found in CrossRef for query: {query}"
+        
+        # Format results
+        results = [f"Found {len(items)} publications from CrossRef for '{query}':\n"]
+        for i, item in enumerate(items, 1):
+            # Title
+            title_list = item.get("title", [])
+            title = title_list[0] if title_list else "N/A"
+            
+            # Authors
+            authors_data = item.get("author", [])
+            authors = ", ".join([f"{a.get('given', '')} {a.get('family', '')}".strip() for a in authors_data[:3]])
+            if len(authors_data) > 3:
+                authors += " et al."
+            if not authors:
+                authors = "N/A"
+            
+            # Publication info
+            pub_date = item.get("published", {}).get("date-parts", [[None]])[0]
+            pub_year = pub_date[0] if pub_date and pub_date[0] else "N/A"
+            
+            # Publisher and container (journal/venue)
+            publisher = item.get("publisher", "N/A")
+            container = item.get("container-title", [])
+            venue = container[0] if container else "N/A"
+            
+            # Type and DOI
+            pub_type = item.get("type", "N/A").replace("-", " ").title()
+            doi = item.get("DOI", "")
+            
+            # Citations and references
+            is_referenced_by_count = item.get("is-referenced-by-count", 0)
+            reference_count = item.get("reference-count", 0)
+            
+            # Funding information
+            funders = item.get("funder", [])
+            funding_info = ", ".join([f.get("name", "Unknown") for f in funders[:2]]) if funders else "No funding info"
+            if len(funders) > 2:
+                funding_info += f" (+{len(funders)-2} more)"
+            
+            # License/Access
+            licenses = item.get("license", [])
+            license_info = licenses[0].get("URL", "N/A") if licenses else "N/A"
+            
+            # Abstract (if available)
+            abstract = item.get("abstract", "No abstract available in CrossRef.")
+            if len(abstract) > 300:
+                abstract = abstract[:297] + "..."
+            
+            results.append(f"\n{i}. **{title}**")
+            results.append(f"   Authors: {authors}")
+            results.append(f"   Year: {pub_year} | Type: {pub_type}")
+            results.append(f"   Venue: {venue}")
+            results.append(f"   Publisher: {publisher}")
+            results.append(f"   Citations: {is_referenced_by_count} | References: {reference_count}")
+            results.append(f"   Funding: {funding_info}")
+            if doi:
+                results.append(f"   DOI: https://doi.org/{doi}")
+            if license_info != "N/A":
+                results.append(f"   License: {license_info}")
+        
+        return "\n".join(results)
+    
+    except Exception as e:
+        return f"Error searching CrossRef: {str(e)}"
+
 # --- 3. CUSTOM LLM INVOCATION FUNCTION (The Bedrock Proxy Call) ---
 
 def invoke_holistic_llm(messages: List[dict]) -> str:
@@ -102,10 +335,47 @@ def agent_chat_logic(user_message, history_list):
     
     trace_text = "ERROR: Trace not generated."
     
-    # Simulate the ReAct decision: Use search for current data, otherwise use internal knowledge
-    if any(keyword in user_message.lower() for keyword in ["latest", "current", "2025", "news", "today"]):
+    # Check if query is about academic papers/research
+    if any(keyword in user_message.lower() for keyword in ["paper", "research", "study", "publication", "author", "citation", "academic", "scholar", "journal", "article"]):
         
-        # A. SEARCH-AUGMENTED CALL (RAG/Valyu Prize)
+        # A. TRIPLE ACADEMIC SEARCH (Semantic Scholar + OpenAlex + CrossRef)
+        try:
+            # Search all three APIs for comprehensive coverage
+            semantic_results = search_semantic_scholar(user_message, limit=2)
+            openalex_results = search_openalex(user_message, limit=2)
+            crossref_results = search_crossref(user_message, limit=2)
+            
+            combined_results = (
+                f"=== SEMANTIC SCHOLAR RESULTS ===\n{semantic_results}\n\n"
+                f"=== OPENALEX RESULTS ===\n{openalex_results}\n\n"
+                f"=== CROSSREF RESULTS (Official DOI Registry) ===\n{crossref_results}"
+            )
+            
+            search_prompt = (
+                f"Answer the user's question based *only* on the academic search results provided below from THREE authoritative sources. "
+                f"Cite specific papers, authors, DOIs, and findings. Synthesize information from all sources when relevant. "
+                f"Mention funding information and publishers when discussing research context.\n\n"
+                f"--- ACADEMIC SEARCH RESULTS ---\n{combined_results}\n\n"
+                f"--- USER QUESTION ---\n{user_message}"
+            )
+            
+            messages = [{"role": "user", "content": search_prompt}]
+            final_answer = invoke_holistic_llm(messages)
+            
+            # Assemble the transparent log
+            trace_text = f"### 🧠 Academic Search Audit Log\n\n"
+            trace_text += f"**Action:** Executed comprehensive academic search across three databases.\n"
+            trace_text += f"**Tools:** Semantic Scholar + OpenAlex + CrossRef (official DOI registry)\n"
+            trace_text += f"**Observation:** Answer synthesized from peer-reviewed research papers with citation counts, open access status, funding information, publisher metadata, and DOIs from authoritative sources."
+
+        except Exception as e:
+             final_answer = f"ERROR: The academic search failed: {e}"
+             trace_text = f"### 🧠 Transparency Audit Log\n\n**Action:** Academic Search Failed. Result generated from internal knowledge."
+    
+    # Check if query needs current/live data
+    elif any(keyword in user_message.lower() for keyword in ["latest", "current", "2025", "news", "today", "recent"]):
+        
+        # B. VALYU SEARCH-AUGMENTED CALL (RAG/Valyu Prize)
         try:
             search_results = valyu_search_tool.run(user_message)
             
@@ -127,9 +397,8 @@ def agent_chat_logic(user_message, history_list):
              final_answer = f"ERROR: The search tool failed to run: {e}"
              trace_text = f"### 🧠 Transparency Audit Log\n\n**Action:** Valyu Search Failed. Result generated from internal knowledge."
 
-
     else:
-        # B. SIMPLE LLM CALL (Baseline/Governance Check)
+        # C. SIMPLE LLM CALL (Baseline/Governance Check)
         messages = [{"role": "user", "content": user_message}]
         final_answer = invoke_holistic_llm(messages)
         

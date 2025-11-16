@@ -105,10 +105,10 @@ export default function Page() {
 			<div className="topbar">
 				<div className="topbar-inner">
 					<div className="brand">
-						<span className="pill">BotOrNot</span>
-						<span>Know your source, know your truth</span>
+						<span className="pill">Track B</span>
+						<span>Transparent AI reasoning and expert discovery</span>
 					</div>
-					<div className="subtitle">Transparent, governance-ready agent with auditable traces</div>
+					<div className="subtitle">Governance-ready agent with auditable traces</div>
 				</div>
 			</div>
 			<div className="container">
@@ -117,7 +117,7 @@ export default function Page() {
 				<div ref={listRef} className="messages">
 					{messages.length === 0 && (
 						<div className="muted">
-								<p><strong>BotOrNot:</strong> Ask a question that requires live data. I will search with Valyu and provide a transparent, auditable answer.</p>
+								<p><strong>Track B Agent:</strong> Ask a question that requires live data. I will search with Valyu and provide a transparent, auditable answer.</p>
 						</div>
 					)}
 					{messages.map((m, i) => (
